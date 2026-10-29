@@ -35,6 +35,11 @@ _BILI_LOGIN_HINT = (
     "Bilibili subtitles need a login. Ask the user to run `bili login` and scan "
     "the QR code themselves; never log in on their behalf."
 )
+_BILI_ACCOUNT_LOGIN_HINT = (
+    "This Bilibili account data needs a login. Ask the user to run "
+    "`agent-reach login bilibili` and scan the QR code themselves; never log in "
+    "on their behalf."
+)
 
 
 def _bvid(target: str, timeout: float) -> str:
@@ -134,6 +139,63 @@ def _api_video_item(v: dict, text=None) -> dict:
     )
 
 
+def _bili_account_json(args: list, timeout: float) -> Any:
+    """Run a login-gated bili-cli command; point the user at the login hint."""
+    try:
+        return _bili_json(args, timeout)
+    except ReachError as exc:
+        if exc.code == NEED_LOGIN:
+            raise ReachError(NEED_LOGIN, exc.message, hint=_BILI_ACCOUNT_LOGIN_HINT) from None
+        raise
+
+
+def _cli_history_item(v: dict) -> dict:
+    bvid = v.get("bvid") or ""
+    viewed = v.get("viewed_at") or ""
+    return make_item(
+        title=v.get("title"),
+        url=f"https://www.bilibili.com/video/{bvid}" if bvid else None,
+        author=v.get("author"),
+        text=f"viewed at {viewed}" if viewed else None,
+        raw=v,
+    )
+
+
+def _cli_favorite_folder_item(v: dict) -> dict:
+    folder_id = v.get("id")
+    count = v.get("media_count")
+    parts = [f"favourite folder #{folder_id}"] if folder_id is not None else []
+    if isinstance(count, int):
+        parts.append(f"{count} videos")
+    return make_item(
+        title=v.get("title"),
+        text=" - ".join(parts) or None,
+        raw=v,
+    )
+
+
+def _cli_favorite_media_item(v: dict) -> dict:
+    bvid = v.get("bvid") or v.get("id") or ""
+    upper = v.get("upper") or {}
+    return make_item(
+        title=v.get("title"),
+        url=f"https://www.bilibili.com/video/{bvid}" if bvid else None,
+        author=upper.get("name"),
+        text=v.get("duration") or None,
+        raw=v,
+    )
+
+
+def _cli_following_item(v: dict) -> dict:
+    uid = v.get("id") or ""
+    return make_item(
+        title=v.get("name"),
+        url=f"https://space.bilibili.com/{uid}" if uid else None,
+        text=v.get("sign") or None,
+        raw=v,
+    )
+
+
 def _bili_api(path: str, timeout: float) -> dict:
     body = http_request(
         f"https://api.bilibili.com{path}",
@@ -195,6 +257,34 @@ class BilibiliChannel(Channel):
             (("bili-cli", "_cli_subtitle"),),
             live_test={"target": "BV1GJ411x7h7"},
         ),
+        Action(
+            "history",
+            "Your own watch history (needs a Bilibili login)",
+            (
+                Param("page", "page of history", required=False, type=int, default=1),
+                Param("limit", "max videos", required=False, type=int, default=20),
+            ),
+            (("bili-cli", "_cli_history"),),
+        ),
+        Action(
+            "favorites",
+            "Your favourite folders, or the videos inside one folder (needs a Bilibili login)",
+            (
+                Param("fav_id", "favourite folder id; omit to list the folders", required=False, type=int),
+                Param("page", "page inside the folder", required=False, type=int, default=1),
+                Param("limit", "max items", required=False, type=int, default=20),
+            ),
+            (("bili-cli", "_cli_favorites"),),
+        ),
+        Action(
+            "following",
+            "The accounts you follow (needs a Bilibili login)",
+            (
+                Param("page", "page of the following list", required=False, type=int, default=1),
+                Param("limit", "max accounts", required=False, type=int, default=20),
+            ),
+            (("bili-cli", "_cli_following"),),
+        ),
     )
 
     def can_handle(self, url: str) -> bool:
@@ -236,3 +326,24 @@ class BilibiliChannel(Channel):
             raise ReachError(NOT_FOUND, "this video has no subtitles")
         text = sub.get("text") or "\n".join(i.get("content", "") for i in sub.get("items") or [])
         return [_cli_video_item(data.get("video") or {}, text=text)]
+
+    def _cli_history(self, *, page: int, limit: int, timeout: float) -> list:
+        data = _bili_account_json(["history", "--page", str(page), "--max", str(min(limit, 100))], timeout)
+        items = (data.get("items") or []) if isinstance(data, dict) else []
+        return [_cli_history_item(v) for v in items[:limit] if isinstance(v, dict)]
+
+    def _cli_favorites(self, *, fav_id, page: int, limit: int, timeout: float) -> list:
+        if fav_id is None:
+            data = _bili_account_json(["favorites"], timeout)
+            folders = data if isinstance(data, list) else (data.get("items") or [])
+            return [_cli_favorite_folder_item(v) for v in folders[:limit] if isinstance(v, dict)]
+        if fav_id < 1:
+            raise ReachError(BAD_INPUT, "fav_id must be a positive integer")
+        data = _bili_account_json(["favorites", str(fav_id), "--page", str(page)], timeout)
+        items = (data.get("items") or []) if isinstance(data, dict) else []
+        return [_cli_favorite_media_item(v) for v in items[:limit] if isinstance(v, dict)]
+
+    def _cli_following(self, *, page: int, limit: int, timeout: float) -> list:
+        data = _bili_account_json(["following", "--page", str(page)], timeout)
+        items = (data.get("items") or []) if isinstance(data, dict) else []
+        return [_cli_following_item(v) for v in items[:limit] if isinstance(v, dict)]

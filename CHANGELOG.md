@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+中文：
+
+- B 站新增三个只读动作：观看历史（history）、收藏夹（favorites）、关注列表（following）。它们读取你自己账号的数据，需要先 `agent-reach login bilibili` 登录；都不做任何写操作。
+
+English:
+
+- Bilibili gains three read-only actions: watch history (`history`), favourite folders (`favorites`) and followings (`following`). They read your own account data and need `agent-reach login bilibili` first; none of them write anything.
+
 
 ## [1.6.0] - 2026-10-23
 
