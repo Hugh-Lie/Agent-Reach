@@ -84,6 +84,8 @@ class Channel(ABC):
     #: Run login_argv / tool calls with HOME = the session dir. False when the tool
     #: takes an explicit path instead (login_argv may use the `{session}` placeholder).
     session_home: bool = True
+    #: Extra hint shown when `verify_login` says the saved session is not usable.
+    login_verify_hint: str = ""
 
     def setup_problems(self) -> List[str]:
         """What still blocks this channel after its tools are installed (keys, browser...)."""
@@ -104,6 +106,13 @@ class Channel(ABC):
         Return a result dict, or None to fall back to running `login_argv`.
         """
         return None
+
+    def verify_login(self) -> Tuple[bool, str]:
+        """Check that the saved session really works, not just that a file exists.
+
+        Return (ok, message). Channels that cannot tell return (True, "").
+        """
+        return True, ""
 
     @abstractmethod
     def can_handle(self, url: str) -> bool:

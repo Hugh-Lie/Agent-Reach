@@ -11,10 +11,12 @@ All notable changes to this project will be documented in this file.
 中文：
 
 - B 站新增三个只读动作：观看历史（history）、收藏夹（favorites）、关注列表（following）。它们读取你自己账号的数据，需要先 `agent-reach login bilibili` 登录；都不做任何写操作。
+- 登录后现在会真的验证一次会话，不再只看"文件存不存在"。B 站扫码登录有时会写出一个空凭证并报"登录成功"，这种情况现在会直接报错并给出修复提示。
 
 English:
 
 - Bilibili gains three read-only actions: watch history (`history`), favourite folders (`favorites`) and followings (`following`). They read your own account data and need `agent-reach login bilibili` first; none of them write anything.
+- A login is now verified against the site instead of only checking that a credential file exists. The Bilibili QR login can save an empty session and still claim success; that now fails with an actionable message.
 
 
 ## [1.6.0] - 2026-10-23

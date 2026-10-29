@@ -455,9 +455,29 @@ def _cmd_login(args: Sequence[str]) -> int:
     if code != 0 or not has_login_state(ch.session):
         return _emit(envelope(channel=ch.name, action="login",
                               error=ReachError(UPSTREAM_BROKEN, f"login did not complete (exit {code})")))
+    try:
+        verified, detail = ch.verify_login()
+    except Exception as exc:  # noqa: BLE001
+        verified, detail = False, f"{type(exc).__name__}: {exc}"
+    failure = _login_verification_error(ch, verified, detail)
+    if failure is not None:
+        return _emit(envelope(channel=ch.name, action="login", error=failure))
     from . import state
     state.mutate(lambda data: data.setdefault("session_reuse", {}).__setitem__(ch.name, {"source": "manual", "at": state.now()}))
     return _emit(envelope(channel=ch.name, action="login", backend=ch.session, items=[{"logged_in": True}]))
+
+
+def _login_verification_error(ch: Channel, verified: bool, detail: str) -> Optional[ReachError]:
+    """Turn a failed session check into an error the agent can act on.
+
+    Some tools write a credential file even when the login stored nothing, so
+    "a file exists" must not be reported as a successful login.
+    """
+    if verified:
+        return None
+    return ReachError(UPSTREAM_BROKEN,
+                      f"login did not produce a usable session: {detail}",
+                      hint=ch.login_verify_hint or None)
 
 
 def _cmd_logout(args: Sequence[str]) -> int:

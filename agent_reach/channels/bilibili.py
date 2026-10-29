@@ -12,7 +12,7 @@ YouTube backend; it just no longer serves bilibili.
 import json
 import re
 import urllib.request
-from typing import Any
+from typing import Any, Tuple
 
 from agent_reach.runtime.result import (
     BAD_INPUT,
@@ -40,6 +40,25 @@ _BILI_ACCOUNT_LOGIN_HINT = (
     "`agent-reach login bilibili` and scan the QR code themselves; never log in "
     "on their behalf."
 )
+
+
+def _verify_bili_login(timeout: float = 20.0) -> Tuple[bool, str]:
+    """Ask bili-cli whether the saved session really authenticates.
+
+    The upstream QR login can write an empty credential file, so "a file exists"
+    is not proof of a usable session.
+    """
+    try:
+        data = _bili_json(["status"], timeout)
+    except ReachError as exc:
+        return False, exc.message
+    except Exception as exc:  # noqa: BLE001
+        return False, f"could not read the bili session: {type(exc).__name__}: {exc}"
+    if not data.get("authenticated"):
+        return False, "bili-cli reports no authenticated session"
+    user = data.get("user") or {}
+    name = str(user.get("name") or user.get("username") or "")
+    return True, name
 
 
 def _bvid(target: str, timeout: float) -> str:
@@ -224,6 +243,15 @@ class BilibiliChannel(Channel):
     session = "bili-cli"
     login_argv = ("bili", "login")
     legacy_state = (".bilibili-cli",)
+    login_verify_hint = (
+        "bili-cli saved a credential that does not authenticate. The upstream QR "
+        "login can write an empty session, so the scan can look successful while "
+        "nothing was stored. Copy the full Cookie header from a logged-in "
+        "bilibili.com tab and write it to "
+        "~/.agent-reach/sessions/bili-cli/.bilibili-cli/credential.json as JSON "
+        "with the fields sessdata, bili_jct, ac_time_value, buvid3, buvid4, "
+        "dedeuserid and saved_at."
+    )
     tools = ("bili-cli",)
     actions = (
         Action(
@@ -291,6 +319,10 @@ class BilibiliChannel(Channel):
         from agent_reach.utils.url import host_matches
 
         return host_matches(url, "bilibili.com", "b23.tv")
+
+    def verify_login(self) -> Tuple[bool, str]:
+        """Ask bili-cli whether the saved credential really authenticates."""
+        return _verify_bili_login()
 
     # ── unified entry backends ──
 
