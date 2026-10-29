@@ -427,9 +427,54 @@ def render_skill(lang: Optional[str] = None) -> str:
     return template.replace("{{CHANNEL_TABLE}}", "\n".join(rows)).replace("{{VERSION}}", __version__)
 
 
+def _is_junction(path: Path) -> bool:
+    """True for a Windows directory junction (a link that needs no admin rights)."""
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return bool(isjunction(path))
+    if os.name != "nt":
+        return False
+    try:
+        tag = getattr(path.lstat(), "st_reparse_tag", None)
+    except OSError:
+        return False
+    return tag == 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
+
+
+def _is_link(path: Path) -> bool:
+    """True for a symlink or a Windows directory junction."""
+    if path.is_symlink():
+        return True
+    return _is_junction(path)
+
+
+def _make_junction(link: Path, target: Path) -> None:
+    """Create a Windows directory junction; ordinary users may do this."""
+    if os.name != "nt":
+        raise OSError("directory junctions only exist on Windows")
+    command = f'cmd /c mklink /J "{link}" "{target}"'
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise OSError(f"mklink /J failed: {detail}")
+
+
+def _create_dir_link(link: Path, target: Path) -> str:
+    """Point `link` at the directory `target`; returns "symlink" or "junction"."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return "symlink"
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt":
+        _make_junction(link, target)
+        return "junction"
+    raise OSError("symlinks are not available here")
+
+
 def _is_our_copy(path: Path) -> bool:
     """A real folder holding our SKILL.md (frontmatter `name: agent-reach`)."""
-    if path.is_symlink() or not path.is_dir():
+    if _is_link(path) or not path.is_dir():
         return False
     try:
         lines = (path / "SKILL.md").read_text("utf-8").splitlines()
@@ -447,7 +492,7 @@ def _is_our_copy(path: Path) -> bool:
 
 
 def _links_to_real(path: Path) -> bool:
-    if not path.is_symlink():
+    if not _is_link(path):
         return False
     try:
         return Path(os.path.realpath(path)) == Path(os.path.realpath(skill_dir()))
@@ -458,6 +503,8 @@ def _links_to_real(path: Path) -> bool:
 def _remove(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink()
+    elif _is_junction(path):
+        os.rmdir(path)
     elif path.exists():
         shutil.rmtree(path)
 
@@ -497,8 +544,8 @@ def _link_into(skills_dir: Path, text: str) -> tuple:
     target = skills_dir / SKILL_NAME
     if _links_to_real(target):
         return "link", None
-    if target.is_symlink():
-        return None, f"a symlink to {os.readlink(target)} is already there"
+    if _is_link(target):
+        return None, "a link to another skill is already there"
     if target.exists():
         if not _is_our_copy(target):
             return None, "a different skill named agent-reach is already there"
@@ -506,7 +553,7 @@ def _link_into(skills_dir: Path, text: str) -> tuple:
         return "copy", None
     skills_dir.mkdir(parents=True, exist_ok=True)
     try:
-        target.symlink_to(skill_dir(), target_is_directory=True)
+        _create_dir_link(target, skill_dir())
         return "link", None
     except (OSError, NotImplementedError):
         # Windows without symlink rights: fall back to a copy that update refreshes.
@@ -593,11 +640,11 @@ def _skill_uninstall_targets() -> List[Path]:
             found.append(path)
     for folder, files in data.get("files", {}).items():
         base = Path(folder)
-        if base.is_symlink():
+        if _is_link(base):
             continue
         for name in files:
             path = Path(name)
-            if path.is_relative_to(base) and not any(p.is_symlink() for p in path.parents if p != base.parent):
+            if path.is_relative_to(base) and not any(_is_link(p) for p in path.parents if p != base.parent):
                 found.append(path)
     return list(dict.fromkeys(found))
 
@@ -920,7 +967,7 @@ def uninstall(dry_run: bool = False) -> dict:
     targets += [tools.tool_dir(n) for n, entry in data["tools"].items()
                 if entry.get("owner") == tools.OURS and entry.get("scope") == "private"
                 and tools._SAFE_NAME.fullmatch(n)]
-    targets = [t for t in targets if t.exists() or t.is_symlink()]
+    targets = [t for t in targets if t.exists() or _is_link(t)]
     globals_ = tools.uninstall_global_owned(dry_run=True)
     if not dry_run:
         if state.owned_path(browser.browser_root()) or browser._load_state().get("backend"):

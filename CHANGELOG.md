@@ -12,11 +12,13 @@ All notable changes to this project will be documented in this file.
 
 - B 站新增三个只读动作：观看历史（history）、收藏夹（favorites）、关注列表（following）。它们读取你自己账号的数据，需要先 `agent-reach login bilibili` 登录；都不做任何写操作。
 - 登录后现在会真的验证一次会话，不再只看"文件存不存在"。B 站扫码登录有时会写出一个空凭证并报"登录成功"，这种情况现在会直接报错并给出修复提示。
+- Windows 上安装技能到别的 AI 工具时，不再退化成一份会过期的副本：改用系统自带的目录联接（junction），普通用户不需要管理员权限，链接始终指向最新版本。
 
 English:
 
 - Bilibili gains three read-only actions: watch history (`history`), favourite folders (`favorites`) and followings (`following`). They read your own account data and need `agent-reach login bilibili` first; none of them write anything.
 - A login is now verified against the site instead of only checking that a credential file exists. The Bilibili QR login can save an empty session and still claim success; that now fails with an actionable message.
+- On Windows the skill is now linked into other AI tools with a directory junction instead of falling back to a copy that goes stale. No admin rights needed, and the link always points at the latest skill.
 
 
 ## [1.6.0] - 2026-10-23

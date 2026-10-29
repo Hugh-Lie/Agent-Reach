@@ -659,7 +659,7 @@ def test_skill_one_real_copy_linked_only_for_present_ais(env):
     for name in ("sessions.md", "maintenance.md"):
         assert (real / "references" / name).is_file()
     for link in (home / ".claude" / "skills" / "agent-reach", home / ".openclaw" / "skills" / "agent-reach"):
-        assert link.is_symlink() and os.path.realpath(link) == os.path.realpath(real)
+        assert manage._is_link(link) and os.path.realpath(link) == os.path.realpath(real)
     assert not (home / ".codex" / "skills").exists(), "codex reads ~/.agents/skills itself"
     assert not (home / ".cursor").exists(), "absent AIs get nothing"
     assert set(result["agents"]) == {"claude-code", "codex", "openclaw"}
@@ -676,8 +676,8 @@ def test_skill_replaces_our_old_copy_but_not_a_foreign_one(env):
     native_old = home / ".codex" / "skills" / "agent-reach"
     _seed_our_copy(native_old)
     result = manage.place_skill()
-    assert ours.is_dir() and not ours.is_symlink()
-    assert not foreign.is_symlink() and "someone-else" in (foreign / "SKILL.md").read_text(encoding="utf-8")
+    assert ours.is_dir() and not manage._is_link(ours)
+    assert not manage._is_link(foreign) and "someone-else" in (foreign / "SKILL.md").read_text(encoding="utf-8")
     assert [n["agent"] for n in result["not_linked"]] == ["cursor"]
     assert native_old.exists() and result["removed_old_copies"] == [], "unrecorded files are retained"
 
@@ -686,13 +686,13 @@ def test_skill_falls_back_to_a_copy_without_symlink_rights(env, monkeypatch):
     home = home_dir()
     (home / ".claude").mkdir()
 
-    def no_symlinks(self, *a, **k):
-        raise OSError("symlinks not permitted")
+    def no_links(link, target):
+        raise OSError("links not permitted")
 
-    monkeypatch.setattr(type(home), "symlink_to", no_symlinks)
+    monkeypatch.setattr(manage, "_create_dir_link", no_links)
     result = manage.place_skill()
     copy = home / ".claude" / "skills" / "agent-reach"
-    assert not copy.is_symlink() and (copy / "SKILL.md").is_file()
+    assert not manage._is_link(copy) and (copy / "SKILL.md").is_file()
     for name in ("sessions.md", "maintenance.md", "capabilities.md"):
         assert (copy / "references" / name).read_text(encoding="utf-8") == (
             manage.skill_dir() / "references" / name).read_text(encoding="utf-8")
@@ -710,17 +710,48 @@ def test_skill_link_for_an_unlisted_ai_and_uninstall_removes_everything(env):
     manage.place_skill()
     other = home / "my-ai" / "skills"
     manage.link_skill(str(other))
-    assert (other / "agent-reach").is_symlink()
+    assert manage._is_link(other / "agent-reach")
     manage.place_skill()
     stray = home / ".gemini" / "skills" / "agent-reach"
     stray.parent.mkdir(parents=True)
-    stray.symlink_to(home / ".agents" / "skills" / "agent-reach")
-    assert (other / "agent-reach").is_symlink(), "update keeps recorded links"
+    manage._create_dir_link(stray, home / ".agents" / "skills" / "agent-reach")
+    assert manage._is_link(other / "agent-reach"), "update keeps recorded links"
     manage.uninstall()
-    assert stray.is_symlink(), "unrecorded shortcut is retained"
+    assert manage._is_link(stray), "unrecorded shortcut is retained"
     for p in (other / "agent-reach", home / ".claude" / "skills" / "agent-reach",
               home / ".agents" / "skills" / "agent-reach"):
-        assert not p.exists() and not p.is_symlink()
+        assert not p.exists() and not manage._is_link(p)
+
+
+def test_skill_link_uses_a_junction_when_symlinks_are_denied(env, monkeypatch):
+    """Windows without symlink rights still gets a live link, not a stale copy."""
+    home = home_dir()
+    (home / ".claude").mkdir()
+
+    def no_symlinks(self, *a, **k):
+        raise OSError("symlinks not permitted")
+
+    monkeypatch.setattr(type(home), "symlink_to", no_symlinks)
+    result = manage.place_skill()
+    link = home / ".claude" / "skills" / "agent-reach"
+    real = home / ".agents" / "skills" / "agent-reach"
+    assert manage._is_link(link), "a junction counts as a link"
+    assert os.path.realpath(link) == os.path.realpath(real)
+    assert result["links"] == [str(link)] and result["copies"] == []
+    (real / "SKILL.md").write_text("changed\n", encoding="utf-8")
+    assert (link / "SKILL.md").read_text(encoding="utf-8") == "changed\n", "the link stays live"
+
+
+def test_removing_a_junction_keeps_the_real_copy(env):
+    home = home_dir()
+    real = home / ".agents" / "skills" / "agent-reach"
+    real.mkdir(parents=True)
+    (real / "SKILL.md").write_text("keep me\n", encoding="utf-8")
+    link = home / ".claude" / "skills" / "agent-reach"
+    link.parent.mkdir(parents=True)
+    manage._create_dir_link(link, real)
+    manage._remove(link)
+    assert not link.exists() and (real / "SKILL.md").is_file(), "the target survives"
 
 
 # ── configure ──
